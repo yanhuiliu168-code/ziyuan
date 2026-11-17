@@ -3,8 +3,7 @@ dist/
 .env
 *.log
 
-server/data.db
-server/data.db-journal
+server/data/
 server/uploads/
 
 .DS_Store

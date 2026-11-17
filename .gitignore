@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.env
+*.log
+
+server/data.db
+server/data.db-journal
+server/uploads/
+
+.DS_Store
+Thumbs.db
+
+.vscode/
+.idea/
+*.swp
+
+stitch_*/

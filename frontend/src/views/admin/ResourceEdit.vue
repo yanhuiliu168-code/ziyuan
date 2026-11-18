@@ -5,7 +5,7 @@
       <h2 class="font-bold text-lg text-slate-800">{{ isEdit ? '编辑资源' : '新建资源' }}</h2>
     </div>
 
-    <el-form ref="formRef" :model="form" :rules="rules" label-width="100px" class="bg-white rounded-xl p-6 border border-slate-200/60 max-w-4xl">
+    <el-form ref="formRef" :model="form" :rules="rules" label-width="100px" scroll-to-error class="bg-white rounded-xl p-6 border border-slate-200/60 max-w-4xl">
       <el-form-item label="分类" prop="category_id">
         <el-select v-model="form.category_id" placeholder="请选择分类" style="width: 100%">
           <el-option v-for="c in categories" :key="c.id" :label="c.name" :value="c.id" />
@@ -59,18 +59,33 @@
         <el-input v-model="form.summary" type="textarea" :rows="2" placeholder="简要介绍资源（不超过200字）" maxlength="200" show-word-limit />
       </el-form-item>
       <el-form-item label="详情内容">
-        <el-input v-model="form.content" type="textarea" :rows="8" placeholder="资源详细介绍，支持纯文本/HTML" />
+        <div class="w-full">
+          <div class="flex flex-wrap items-center gap-2 mb-2">
+            <input type="file" ref="contentFileInput" accept="image/*" @change="handleInsertContentImage" class="hidden" />
+            <el-button size="small" @click="$refs.contentFileInput.click()" :loading="contentUploading">🖼️ 插入图片</el-button>
+            <el-button size="small" @click="insertImageByUrl">🔗 插入图片链接</el-button>
+            <span class="text-xs text-slate-400">图片会插入到光标位置，可与文字混排</span>
+          </div>
+          <el-input ref="contentInput" v-model="form.content" type="textarea" :rows="10"
+            placeholder="资源详细介绍，支持纯文本与图片混排；直接输入文字，点上方按钮插入图片" />
+          <div v-if="form.content" class="mt-2">
+            <div class="text-xs text-slate-400 mb-1">效果预览</div>
+            <div class="p-3 rounded-lg border border-slate-200 bg-slate-50 text-sm text-slate-700 leading-[1.9] whitespace-pre-wrap break-words content-preview" v-html="form.content"></div>
+          </div>
+        </div>
       </el-form-item>
 
       <el-form-item label="下载地址">
         <div class="w-full">
           <div v-for="(pan, i) in form.pans" :key="i" class="flex items-center gap-2 mb-2">
-            <el-input v-model="pan.pan_name" placeholder="网盘名称（百度网盘/阿里云盘等）" style="width: 150px" />
-            <el-input v-model="pan.url" placeholder="链接" style="flex: 1" />
+            <PanIcon :name="pan.pan_name" :url="pan.url" :size="28" />
+            <el-input v-model="pan.pan_name" placeholder="网盘名称（粘贴链接后自动识别）" style="width: 170px" />
+            <el-input v-model="pan.url" @input="onPanUrlInput(pan)" @change="onPanUrlInput(pan)" placeholder="链接" style="flex: 1" />
             <el-input v-model="pan.code" placeholder="提取码" style="width: 120px" />
             <el-button type="danger" :icon="Delete" circle @click="form.pans.splice(i,1)" />
           </div>
           <el-button :icon="Plus" @click="form.pans.push({pan_name:'', url:'', code:''})">添加下载地址</el-button>
+          <div class="text-xs text-slate-400 mt-1">粘贴百度网盘 / 天翼云盘 / 阿里云盘 / 夸克网盘 / 迅雷云盘链接后，会自动识别网盘名称并显示对应图标</div>
         </div>
       </el-form-item>
 
@@ -116,11 +131,13 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Plus, ArrowUp, ArrowDown } from '@element-plus/icons-vue'
 import api from '@/api'
+import PanIcon from '@/components/PanIcon.vue'
+import { detectPan } from '@/utils/pan'
 
 const route = useRoute()
 const router = useRouter()
@@ -128,6 +145,9 @@ const isEdit = computed(() => !!route.params.id)
 const formRef = ref(null)
 const saving = ref(false)
 const uploading = ref(false)
+const contentInput = ref(null)
+const contentFileInput = ref(null)
+const contentUploading = ref(false)
 const fileInput = ref(null)
 const multiFileInput = ref(null)
 const categories = ref([])
@@ -157,6 +177,11 @@ const rules = {
   summary: [{ required: true, message: '请输入简介', trigger: 'blur' }]
 }
 
+function onPanUrlInput(pan) {
+  const provider = detectPan(pan.url)
+  if (provider) pan.pan_name = provider.name
+}
+
 async function load() {
   if (isEdit.value) {
     const data = await api.get(`/resources/${route.params.id}`)
@@ -177,6 +202,37 @@ async function uploadSingleFile(file) {
   fd.append('file', file)
   const data = await api.post('/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
   return data.url
+}
+
+function insertContentHtml(html) {
+  const ta = contentInput.value?.textarea || contentInput.value?.$el?.querySelector('textarea')
+  const text = form.content || ''
+  const pos = ta ? ta.selectionStart : text.length
+  form.content = text.slice(0, pos) + html + text.slice(pos)
+  nextTick(() => {
+    if (!ta) return
+    ta.focus()
+    ta.selectionStart = ta.selectionEnd = pos + html.length
+  })
+}
+
+async function handleInsertContentImage(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  contentUploading.value = true
+  try {
+    const url = await uploadSingleFile(file)
+    insertContentHtml(`\n<img src="${url.replace(/"/g, '&quot;')}" alt="">\n`)
+    ElMessage.success('图片已插入到光标位置')
+  } catch (err) { ElMessage.error(err) }
+  contentUploading.value = false
+  e.target.value = ''
+}
+
+function insertImageByUrl() {
+  const input = window.prompt('请输入图片地址（http/https 链接或 /uploads/...）')
+  if (!input || !input.trim()) return
+  insertContentHtml(`\n<img src="${input.trim().replace(/"/g, '&quot;')}" alt="">\n`)
 }
 
 async function handleUploadCover(e) {
@@ -262,7 +318,12 @@ function removeImage(i) {
 }
 
 async function save() {
-  await formRef.value.validate()
+  try {
+    await formRef.value.validate()
+  } catch (e) {
+    ElMessage.warning('请先填写必填项：分类、标题、简介')
+    return
+  }
   saving.value = true
   try {
     const payload = {
@@ -292,3 +353,13 @@ onMounted(async () => {
   await load()
 })
 </script>
+
+<style scoped>
+.content-preview :deep(img) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 10px 0;
+  border-radius: 10px;
+}
+</style>

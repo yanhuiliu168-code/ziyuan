@@ -5,16 +5,20 @@
       <div v-if="quotaBanner" class="mb-4 p-3 rounded-xl bg-gradient-to-r from-sky-500/10 to-indigo-500/10 border border-sky-200 flex items-center gap-3 text-sm">
         <div class="w-8 h-8 rounded-lg bg-sky-500 text-white flex items-center justify-center font-bold text-xs">{{ quotaBanner.remaining }}</div>
         <div class="flex-1 min-w-0 text-slate-700">
-          你今天还可以免费查看 <b class="text-sky-600">{{ quotaBanner.remaining }}</b> 个资源（已看 {{ quotaBanner.viewed }} / 共 {{ quotaBanner.total }}）
+          <template v-if="quotaInfo.locked">今日免费观看次数已用完，下载链接已隐藏，看完广告即可解锁</template>
+          <template v-else>你今天还可以免费查看 <b class="text-sky-600">{{ quotaBanner.remaining }}</b> 个资源（已看 {{ quotaBanner.viewed }} / 共 {{ quotaBanner.total }}）</template>
         </div>
-        <button v-if="quotaBanner.remaining <= 3 && quotaBanner.remaining > 0" @click="showAdModal" class="px-3 py-1.5 rounded-lg bg-secondary-500 hover:bg-secondary-600 text-white text-xs font-bold">
+        <button v-if="quotaInfo.locked" @click="showAdModal" class="px-3 py-1.5 rounded-lg bg-secondary-500 hover:bg-secondary-600 text-white text-xs font-bold">
+          📺 看广告 +{{ quotaBanner.next_ad_grant }}
+        </button>
+        <button v-else-if="quotaBanner.remaining <= 3 && quotaBanner.remaining > 0" @click="showAdModal" class="px-3 py-1.5 rounded-lg bg-secondary-500 hover:bg-secondary-600 text-white text-xs font-bold">
           📺 看广告 +{{ quotaBanner.next_ad_grant }}
         </button>
       </div>
 
       <div v-if="loading" class="py-20 text-center text-slate-400">加载中...</div>
-      <div v-else-if="!resource && !quotaBlocked" class="py-20 text-center text-slate-400">资源不存在</div>
-      <template v-else-if="!quotaBlocked">
+      <div v-else-if="!resource" class="py-20 text-center text-slate-400">资源不存在</div>
+      <template v-else>
         <div class="flex flex-col lg:flex-row gap-6 items-start">
           <aside class="w-full lg:w-60 shrink-0 space-y-4">
             <div class="card p-3">
@@ -71,7 +75,8 @@
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
                   {{ resource.views.toLocaleString() }} 次浏览
                 </span>
-                <span class="text-secondary-500">📦 共 {{ resource.pans?.length || 0 }} 份网盘</span>
+                <span v-if="quotaInfo.locked" class="text-secondary-500">🔒 下载链接已锁定</span>
+                <span v-else class="text-secondary-500">📦 共 {{ resource.pans?.length || 0 }} 份网盘</span>
               </div>
 
               <div v-if="gallery.length" class="mt-6 space-y-3">
@@ -83,17 +88,17 @@
                   <span class="w-5 h-5 rounded-full bg-amber-500 text-white text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">!</span>
                   <div>
                     <h4 class="text-sm font-bold text-amber-700">💡 资源简介</h4>
-                    <p class="mt-1 text-sm text-amber-700/90 leading-relaxed">{{ resource.summary }}</p>
+                    <p class="mt-1 text-sm text-amber-700/90 leading-relaxed whitespace-pre-line break-words">{{ resource.summary }}</p>
                   </div>
                 </div>
               </div>
 
               <div v-if="resource.content" class="mt-6 prose prose-slate max-w-none">
-                <div class="text-slate-700 leading-relaxed" v-html="resource.content"></div>
+                <div class="resource-content text-slate-700 leading-[1.9] whitespace-pre-wrap break-words" v-html="resource.content"></div>
               </div>
             </article>
 
-            <div v-if="resource.pans?.length" class="rounded-2xl overflow-hidden ring-2 ring-secondary-200 shadow-xl shadow-secondary-100/60">
+            <div v-if="resource.pans?.length || quotaInfo.locked" class="rounded-2xl overflow-hidden ring-2 ring-secondary-200 shadow-xl shadow-secondary-100/60">
               <div class="bg-gradient-to-r from-secondary-500 via-orange-500 to-amber-500 px-6 py-4 flex items-center gap-3">
                 <div class="w-10 h-10 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center">
                   <svg class="w-5 h-5 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
@@ -102,12 +107,24 @@
                   <div class="font-bold text-white text-base">⬇️ 立即下载资源</div>
                   <div class="text-[12px] text-white/80 mt-0.5">本站资源永久免费，点击下方按钮直达下载</div>
                 </div>
-                <span class="ml-auto text-xs font-bold px-3 py-1 rounded-full bg-white/20 backdrop-blur text-white">{{ resource.pans.length }} 份可用网盘</span>
+                <span class="ml-auto text-xs font-bold px-3 py-1 rounded-full bg-white/20 backdrop-blur text-white">{{ quotaInfo.locked ? '🔒 已锁定' : resource.pans.length + ' 份可用网盘' }}</span>
               </div>
               <div class="bg-white p-5 space-y-4">
+                <div v-if="quotaInfo.locked" class="text-center py-8">
+                  <div class="w-16 h-16 mx-auto rounded-full bg-gradient-to-br from-secondary-500 to-orange-500 text-white flex items-center justify-center text-3xl shadow-lg shadow-secondary-200">🔒</div>
+                  <h3 class="mt-4 text-lg font-bold text-slate-800">下载链接已锁定</h3>
+                  <p class="mt-2 text-sm text-slate-500 leading-relaxed">
+                    今日免费观看次数已用完（已看 {{ quotaInfo.viewed }} 个）<br>
+                    看 1 个激励视频广告即可解锁 <b class="text-secondary-600 font-bold">{{ quotaInfo.next_ad_grant }}</b> 次下载
+                  </p>
+                  <button @click="showAdModal" class="mt-5 inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-secondary-500 to-orange-500 hover:from-secondary-600 hover:to-orange-600 text-white font-bold text-sm shadow-lg shadow-secondary-200 transition-all">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                    观看视频广告解锁
+                  </button>
+                </div>
                 <div v-for="(pan, i) in resource.pans" :key="i" class="group">
                   <div class="flex items-center gap-3 mb-3">
-                    <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-primary-500 to-indigo-500 text-white flex items-center justify-center text-sm font-bold shrink-0">{{ (pan.pan_type || pan.pan_name || '网盘').slice(0,2) }}</div>
+                    <PanIcon :name="pan.pan_type || pan.pan_name" :url="pan.url" :size="40" />
                     <div class="flex-1 min-w-0">
                       <div class="text-sm font-bold text-slate-800">{{ pan.pan_type || pan.pan_name || '网盘' }}</div>
                       <div class="text-[11px] text-emerald-500 font-medium">✓ 官方渠道 · 真实有效</div>
@@ -180,14 +197,22 @@
                   <span class="font-bold text-base">资源下载</span>
                   <span class="ml-2 text-xs opacity-90">点击下方按钮获取</span>
                 </div>
-                <span class="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/20 backdrop-blur">{{ resource.pans?.length || 0 }} 份网盘</span>
+                <span class="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/20 backdrop-blur">{{ quotaInfo.locked ? '🔒' : resource.pans?.length || 0 }} {{ quotaInfo.locked ? '已锁定' : '份网盘' }}</span>
               </div>
 
               <div class="p-5 space-y-4">
-                <div v-if="resource.pans?.length" class="space-y-4">
+                <div v-if="quotaInfo.locked" class="text-center py-6">
+                  <div class="w-14 h-14 mx-auto rounded-full bg-gradient-to-br from-secondary-500 to-orange-500 text-white flex items-center justify-center text-2xl shadow-lg shadow-secondary-200">🔒</div>
+                  <h3 class="mt-3 text-base font-bold text-slate-800">下载链接已锁定</h3>
+                  <p class="mt-1.5 text-xs text-slate-500 leading-relaxed">今日免费次数已用完，看广告可解锁 <b class="text-secondary-600">{{ quotaInfo.next_ad_grant }}</b> 次下载</p>
+                  <button @click="showAdModal" class="mt-4 w-full py-2.5 rounded-lg bg-gradient-to-r from-secondary-500 to-orange-500 hover:from-secondary-600 hover:to-orange-600 text-white text-sm font-bold shadow-md shadow-secondary-200 transition-all">
+                    📺 观看广告解锁
+                  </button>
+                </div>
+                <div v-else-if="resource.pans?.length" class="space-y-4">
                   <div v-for="(pan, i) in resource.pans" :key="i" class="space-y-2">
                     <div class="flex items-center gap-2">
-                      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-indigo-500 text-white flex items-center justify-center text-xs font-bold shrink-0">{{ (pan.pan_type || pan.pan_name || '网盘').slice(0,2) }}</div>
+                      <PanIcon :name="pan.pan_type || pan.pan_name" :url="pan.url" :size="32" />
                       <div class="flex-1 min-w-0">
                         <div class="text-sm font-semibold text-slate-700">{{ pan.pan_type || pan.pan_name || '网盘' }}</div>
                         <div class="text-[11px] text-slate-400">官方渠道，真实有效</div>
@@ -252,51 +277,15 @@
           </aside>
         </div>
       </template>
-
-      <div v-else class="py-10 flex items-start justify-center">
-        <div class="w-full max-w-md text-center bg-white rounded-2xl shadow-xl border border-slate-200 p-8">
-          <div class="w-20 h-20 rounded-full bg-gradient-to-br from-secondary-500 to-orange-500 text-white flex items-center justify-center text-4xl mx-auto shadow-lg shadow-secondary-200">
-            🚫
-          </div>
-          <h2 class="mt-5 text-xl font-bold text-slate-800">今日观看次数已用完</h2>
-          <p class="mt-2 text-sm text-slate-500 leading-relaxed">
-            你已免费查看 <b class="text-slate-700">{{ quotaInfo.viewed }}</b> 个资源，<br>
-            看 1 个激励视频广告即可继续解锁 <b class="text-secondary-600 font-bold">{{ quotaInfo.next_ad_grant }}</b> 次观看
-          </p>
-          <div class="mt-6 grid grid-cols-2 gap-3 text-xs">
-            <div class="p-3 rounded-lg bg-slate-50 border border-slate-100">
-              <div class="text-slate-400">已看广告</div>
-              <div class="mt-1 text-lg font-bold text-slate-700">{{ quotaInfo.ad_count }} 次</div>
-            </div>
-            <div class="p-3 rounded-lg bg-slate-50 border border-slate-100">
-              <div class="text-slate-400">看广告解锁</div>
-              <div class="mt-1 text-lg font-bold text-secondary-600">+{{ quotaInfo.next_ad_grant }}</div>
-            </div>
-          </div>
-          <button @click="showAdModal" class="mt-6 w-full py-3.5 rounded-xl bg-gradient-to-r from-secondary-500 to-orange-500 hover:from-secondary-600 hover:to-orange-600 text-white font-bold text-sm shadow-lg shadow-secondary-200 transition-all flex items-center justify-center gap-2">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-            观看视频广告解锁
-          </button>
-          <router-link to="/resources" class="mt-3 inline-block text-sm text-slate-500 hover:text-primary-600">← 返回资源列表</router-link>
-        </div>
-      </div>
     </main>
 
     <Teleport to="body">
-      <div v-if="adModalVisible" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" @click.self="adModalVisible = false">
+      <div v-if="adModalVisible" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" @click.self="onBackdrop">
         <div class="relative w-full max-w-lg mx-4 bg-slate-900 rounded-2xl overflow-hidden shadow-2xl">
-          <button @click="adModalVisible = false" class="absolute top-3 right-3 z-10 w-8 h-8 rounded-full bg-black/50 text-white hover:bg-black/70 flex items-center justify-center text-lg leading-none">×</button>
+          <button v-if="adStage !== 'loading' && adStage !== 'mount'" @click="closeAdModal" class="absolute top-3 right-3 z-10 w-8 h-8 rounded-full bg-black/50 text-white hover:bg-black/70 flex items-center justify-center text-lg leading-none">×</button>
 
           <div class="relative aspect-video bg-black overflow-hidden">
-            <div v-if="adPlaying" class="absolute inset-0 flex flex-col items-center justify-center text-white">
-              <div class="w-20 h-20 rounded-full border-4 border-white/30 border-t-white animate-spin"></div>
-              <div class="mt-4 text-sm opacity-80">正在播放激励视频...</div>
-              <div class="mt-1 text-xs opacity-60">广告剩余 {{ adCountdown }} 秒</div>
-              <div class="w-48 h-1 mt-4 rounded-full bg-white/20 overflow-hidden">
-                <div class="h-full bg-gradient-to-r from-secondary-500 to-orange-500 transition-all duration-1000" :style="{ width: ((5 - adCountdown) / 5 * 100) + '%' }"></div>
-              </div>
-            </div>
-            <div v-else-if="adCompleted" class="absolute inset-0 flex flex-col items-center justify-center text-white">
+            <div v-if="adStage === 'completed'" class="absolute inset-0 flex flex-col items-center justify-center text-white">
               <div class="w-20 h-20 rounded-full bg-emerald-500 flex items-center justify-center text-4xl">✓</div>
               <div class="mt-4 font-bold text-lg">观看完成！</div>
               <div class="mt-1 text-sm opacity-80">已为你解锁 +{{ lastGranted }} 次观看</div>
@@ -304,9 +293,33 @@
                 继续查看资源
               </button>
             </div>
+
+            <div v-else-if="adStage === 'mount'" class="absolute inset-0">
+              <div ref="adMount" class="w-full h-full"></div>
+            </div>
+
+            <div v-else-if="adStage === 'error'" class="absolute inset-0 flex flex-col items-center justify-center text-white px-6 text-center">
+              <div class="w-16 h-16 rounded-full bg-rose-500 flex items-center justify-center text-3xl font-bold">!</div>
+              <div class="mt-3 font-bold">广告播放失败</div>
+              <div class="mt-1 text-xs opacity-70 leading-relaxed max-w-sm break-words">{{ adError }}</div>
+              <div class="mt-4 flex gap-2">
+                <button @click="startAd" class="px-5 py-2 rounded-full bg-white text-slate-900 font-bold text-sm hover:bg-slate-100">重新观看</button>
+                <button @click="closeAdModal" class="px-5 py-2 rounded-full bg-white/20 text-white font-bold text-sm hover:bg-white/30">关闭</button>
+              </div>
+            </div>
+
+            <div v-else-if="adStage === 'loading'" class="absolute inset-0 flex flex-col items-center justify-center text-white px-6 text-center">
+              <div class="w-16 h-16 rounded-full border-4 border-white/30 border-t-white animate-spin"></div>
+              <div class="mt-4 text-sm opacity-90">{{ adStatus }}</div>
+              <div v-if="adTotal" class="mt-1 text-xs opacity-60">广告剩余 {{ adCountdown }} 秒</div>
+              <div v-if="adTotal" class="w-48 h-1 mt-4 rounded-full bg-white/20 overflow-hidden">
+                <div class="h-full bg-gradient-to-r from-secondary-500 to-orange-500 transition-all duration-1000" :style="{ width: ((adTotal - adCountdown) / adTotal * 100) + '%' }"></div>
+              </div>
+            </div>
+
             <div v-else class="absolute inset-0 flex flex-col items-center justify-center text-white">
               <svg class="w-20 h-20 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-              <div class="mt-4 text-sm opacity-70">模拟激励视频广告</div>
+              <div class="mt-4 text-sm opacity-70">{{ adLabel }}</div>
               <button @click="startAd" class="mt-4 px-6 py-2 rounded-full bg-white text-slate-900 font-bold text-sm hover:bg-slate-100">
                 ▶ 开始观看
               </button>
@@ -315,8 +328,8 @@
           </div>
 
           <div class="p-4 bg-slate-800 text-white flex items-center justify-between text-xs">
-            <span class="opacity-60">📺 模拟广告 · 实际部署可对接穿山甲/优量汇</span>
-            <span class="opacity-60">预计奖励 +{{ quotaInfo.next_ad_grant || 5 }} 次</span>
+            <span class="opacity-60">📺 {{ adLabel }}</span>
+            <span class="opacity-60">观看完成解锁 +{{ quotaInfo.next_ad_grant || 1 }} 次</span>
           </div>
         </div>
       </div>
@@ -327,13 +340,15 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import Header from '@/components/Header.vue'
 import Footer from '@/components/Footer.vue'
 import CatIcon from '@/components/CatIcon.vue'
+import PanIcon from '@/components/PanIcon.vue'
 import api from '@/api'
+import { createAdSession, playRewardedAd, completeRewardedAd, providerLabel } from '@/utils/rewardedAd'
 
 const route = useRoute()
 const resource = ref(null)
@@ -352,53 +367,84 @@ const adCards = ref([])
 const hotResources = ref([])
 const form = ref({ nickname: '', content: '' })
 
-const quotaInfo = ref({ enabled: false, remaining: -1, total: -1, viewed: 0, ad_count: 0, next_ad_grant: 5 })
-const quotaBlocked = computed(() => quotaInfo.value.enabled && quotaInfo.value.remaining !== -1 && quotaInfo.value.remaining <= 0)
+const quotaInfo = ref({ enabled: false, remaining: -1, total: -1, viewed: 0, ad_count: 0, next_ad_grant: 5, locked: false })
 const quotaBanner = computed(() => {
   if (!quotaInfo.value.enabled || quotaInfo.value.remaining === -1) return null
   return quotaInfo.value
 })
 
 const adModalVisible = ref(false)
-const adPlaying = ref(false)
-const adCompleted = ref(false)
-const adCountdown = ref(5)
+const adStage = ref('idle') // idle | loading | custom | completed | error
+const adStatus = ref('')
+const adError = ref('')
+const adLabel = ref('激励视频广告')
+const adCountdown = ref(0)
+const adTotal = ref(0)
 const lastGranted = ref(0)
-let adTimer = null
+const adMount = ref(null)
 
 function showAdModal() {
   adModalVisible.value = true
-  adPlaying.value = false
-  adCompleted.value = false
-  adCountdown.value = 5
+  adStage.value = 'idle'
+  adStatus.value = ''
+  adError.value = ''
+  adCountdown.value = 0
+  adTotal.value = 0
 }
 
-function startAd() {
-  adPlaying.value = true
-  adCountdown.value = 5
-  adTimer = setInterval(() => {
-    adCountdown.value--
-    if (adCountdown.value <= 0) {
-      clearInterval(adTimer)
-      adPlaying.value = false
-      adCompleted.value = true
+function closeAdModal() {
+  if (adStage.value === 'loading' || adStage.value === 'mount') return
+  adModalVisible.value = false
+  adStage.value = 'idle'
+}
+
+function onBackdrop() {
+  closeAdModal()
+}
+
+async function startAd() {
+  adError.value = ''
+  adStatus.value = '正在创建广告会话…'
+  adCountdown.value = 0
+  adTotal.value = 0
+  adStage.value = 'loading'
+  try {
+    const session = await createAdSession()
+    if (!session.enabled) {
+      adModalVisible.value = false
+      ElMessage.warning('当前未开启访问限制，无需观看广告')
+      return
     }
-  }, 1000)
+    adLabel.value = providerLabel(session.provider, false)
+    if (session.provider === 'custom' || session.provider === 'direct_video') adStage.value = 'mount'
+    await nextTick()
+    const result = await playRewardedAd(session, {
+      mountEl: adMount.value,
+      onStatus: msg => { adStatus.value = msg },
+      onTick: (left, total) => { adCountdown.value = left; adTotal.value = total }
+    })
+    if (result.simulated && session.provider !== 'simulation') {
+      adLabel.value = providerLabel(session.provider, true)
+    }
+    const grant = await completeRewardedAd(session.session_id)
+    lastGranted.value = grant.granted || 0
+    quotaInfo.value.enabled = true
+    quotaInfo.value.remaining = grant.remaining
+    quotaInfo.value.ad_count = grant.ad_count
+    adStage.value = 'completed'
+  } catch (e) {
+    adError.value = e.message || '广告播放失败'
+    adStage.value = 'error'
+  }
 }
 
 async function afterAd() {
   adModalVisible.value = false
-  adCompleted.value = false
-  try {
-    const res = await api.post('/visitor/watch-ad')
-    lastGranted.value = res.granted
-    quotaInfo.value.enabled = true
-    quotaInfo.value.remaining = res.remaining
-    quotaInfo.value.ad_count = res.ad_count
-    ElMessage.success(`成功解锁 +${res.granted} 次观看！`)
+  adStage.value = 'idle'
+  if (lastGranted.value > 0) {
+    ElMessage.success(`成功解锁 +${lastGranted.value} 次观看！`)
+    lastGranted.value = 0
     await load()
-  } catch (e) {
-    ElMessage.error(e)
   }
 }
 
@@ -411,7 +457,7 @@ async function load() {
     if (data._quota && data._quota.enabled) {
       quotaInfo.value = data._quota
     } else {
-      quotaInfo.value = { enabled: false, remaining: -1, total: -1, viewed: 0, ad_count: 0, next_ad_grant: 5 }
+      quotaInfo.value = { enabled: false, remaining: -1, total: -1, viewed: 0, ad_count: 0, next_ad_grant: 5, locked: false }
     }
   } catch (e) {
     if (e.status === 403 && e.quota) {
@@ -426,14 +472,17 @@ async function load() {
 
 async function loadSidebar() {
   try {
-    const [c, cards, hot] = await Promise.all([
+    const [c, cards, hot, site] = await Promise.all([
       api.get('/categories'),
       api.get('/ad-cards'),
-      api.get('/resources/hot?limit=5')
+      api.get('/resources/hot?limit=5'),
+      api.get('/settings/public')
     ])
     categories.value = c || []
     adCards.value = cards || []
     hotResources.value = hot || []
+    const s = (site && site.settings) || {}
+    adLabel.value = providerLabel(s.ad_provider || 'simulation', false)
   } catch (e) {}
 }
 
@@ -466,3 +515,20 @@ watch(() => route.params.id, () => {
   load()
 })
 </script>
+
+<style scoped>
+.resource-content :deep(img) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 14px 0;
+  border-radius: 12px;
+}
+.resource-content :deep(iframe),
+.resource-content :deep(video) {
+  display: block;
+  max-width: 100%;
+  margin: 14px 0;
+  border-radius: 12px;
+}
+</style>

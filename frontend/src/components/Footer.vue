@@ -21,6 +21,9 @@
         © {{ new Date().getFullYear() }} 资源仓库 Resource Depot
         <span v-if="settings.site_icp" class="ml-3">{{ settings.site_icp }}</span>
       </div>
+      <div class="mt-3 px-2 text-center text-slate-400 text-[11px] leading-relaxed">
+        本站所发布的全部内容源于互联网搬运，仅限于小范围内传播学习和文献参考，请在下载后24小时内删除，如果有侵权之处请第一时间联系我们删除。敬请谅解! E-mail：<a href="mailto:ryutyokiliu@qq.com" class="hover:text-slate-600 underline">ryutyokiliu@qq.com</a>
+      </div>
     </div>
   </footer>
 </template>

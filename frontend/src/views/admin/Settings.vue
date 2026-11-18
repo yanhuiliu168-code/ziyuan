@@ -81,6 +81,99 @@
           </template>
         </el-form>
       </el-tab-pane>
+
+      <el-tab-pane label="广告设置" name="ad">
+        <el-alert class="mb-5" type="warning" :closable="false" show-icon>
+          <template #title>
+            <span class="font-semibold">关于真实激励视频</span>
+          </template>
+          <div class="text-sm leading-relaxed">
+            穿山甲官方只支持移动原生 App（iOS/Android/Unity/鸿蒙），优量汇 H5 激励视频也只允许在其 Android SDK 的 WebView 内播放。<br>
+            纯网站建议用「直投视频广告」直接播放 MP4 广告，或用「自定义广告代码」接入支持网页的视频联盟。
+          </div>
+        </el-alert>
+
+        <el-form :model="basic" label-width="180px" class="max-w-2xl">
+          <el-form-item label="广告平台">
+            <el-select v-model="basic.ad_provider" style="width: 100%">
+              <el-option label="模拟广告（不接真实平台，仅演示流程）" value="simulation" />
+              <el-option label="直投视频广告（配置 MP4，网站直接播放）" value="direct_video" />
+              <el-option label="自定义广告代码（iframe + postMessage 回调）" value="custom" />
+              <el-option label="优量汇 H5 激励视频（仅 App WebView 内可播放）" value="gdt_h5" />
+              <el-option label="穿山甲（仅原生 App，网页不支持）" value="pangle" />
+            </el-select>
+          </el-form-item>
+
+          <template v-if="basic.ad_provider === 'direct_video'">
+            <el-form-item label="广告视频地址">
+              <el-input v-model="basic.ad_video_url" placeholder="https://.../ad.mp4（需可直接访问的 MP4 直链）" />
+            </el-form-item>
+            <el-form-item label="广告标题">
+              <el-input v-model="basic.ad_video_title" placeholder="例如：限时活动推荐（可不填）" />
+            </el-form-item>
+            <el-form-item label="点击跳转地址">
+              <el-input v-model="basic.ad_video_click_url" placeholder="用户点击「了解详情」后跳转的链接（可不填）" />
+            </el-form-item>
+            <el-alert class="mb-4" type="info" :closable="false" show-icon>
+              视频需完整播放结束才发放奖励，建议 15~30 秒；格式用 MP4（H.264），不要用 m3u8。
+            </el-alert>
+          </template>
+
+          <template v-if="basic.ad_provider === 'gdt_h5'">
+            <el-form-item label="优量汇 AppID">
+              <el-input v-model="basic.gdt_app_id" placeholder="例如 110xxxxxxx" />
+            </el-form-item>
+            <el-form-item label="优量汇广告位 ID">
+              <el-input v-model="basic.gdt_placement_id" placeholder="激励视频广告位 ID" />
+            </el-form-item>
+            <el-alert class="mb-4" type="info" :closable="false" show-icon>
+              需先在优量汇后台创建「激励视频」广告位并申请 H5 激励视频权限；播放依赖 App 壳的 WebView 环境。
+            </el-alert>
+          </template>
+
+          <template v-if="basic.ad_provider === 'pangle'">
+            <el-form-item label="穿山甲 AppID">
+              <el-input v-model="basic.pangle_app_id" placeholder="仅原生 App 使用" />
+            </el-form-item>
+            <el-form-item label="穿山甲广告位 ID">
+              <el-input v-model="basic.pangle_slot_id" placeholder="仅原生 App 使用" />
+            </el-form-item>
+          </template>
+
+          <template v-if="basic.ad_provider === 'custom'">
+            <el-form-item label="自定义广告代码">
+              <el-input v-model="basic.custom_ad_html" type="textarea" :rows="8" placeholder="粘贴广告联盟提供的 HTML / JS 代码（可含 script 标签）" />
+              <div class="text-xs text-slate-500 mt-1 leading-relaxed">
+                代码会在隔离 iframe 中执行。播放完成后请调用
+                <code class="px-1 bg-slate-100 rounded">parent.postMessage('rewarded_ad_complete', '*')</code>
+                通知本站发放奖励；播放失败可调用
+                <code class="px-1 bg-slate-100 rounded">parent.postMessage({type:'rewarded_ad_error', message:'原因'}, '*')</code>。
+              </div>
+            </el-form-item>
+          </template>
+
+          <el-divider content-position="left">播放与回退策略</el-divider>
+
+          <el-form-item label="最短观看时长">
+            <el-input-number v-model="basic.ad_min_seconds" :min="1" :max="120" />
+            <span class="ml-3 text-sm text-slate-500">秒，服务端校验，未达标不发奖励</span>
+          </el-form-item>
+          <el-form-item label="模拟广告时长">
+            <el-input-number v-model="basic.ad_simulation_seconds" :min="1" :max="120" />
+            <span class="ml-3 text-sm text-slate-500">秒，建议不小于最短观看时长</span>
+          </el-form-item>
+          <el-form-item label="真实广告失败时">
+            <el-radio-group v-model="basic.ad_fallback_mode">
+              <el-radio value="simulation">回退模拟广告并发放奖励</el-radio>
+              <el-radio value="none">不发奖励，提示重新观看</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item v-if="basic.ad_fallback_mode !== 'none'" label="回退广告时长">
+            <el-input-number v-model="basic.ad_fallback_seconds" :min="1" :max="120" />
+            <span class="ml-3 text-sm text-slate-500">秒</span>
+          </el-form-item>
+        </el-form>
+      </el-tab-pane>
     </el-tabs>
 
     <div class="mt-4 pt-4 border-t border-slate-100 flex gap-3">
@@ -105,7 +198,20 @@ const basic = reactive({
   view_limit_free: 10,
   view_limit_ad1: 5,
   view_limit_ad2: 3,
-  view_limit_ad3: 1
+  view_limit_ad3: 1,
+  ad_provider: 'simulation',
+  ad_min_seconds: 5,
+  ad_simulation_seconds: 5,
+  ad_fallback_mode: 'simulation',
+  ad_fallback_seconds: 5,
+  gdt_app_id: '',
+  gdt_placement_id: '',
+  pangle_app_id: '',
+  pangle_slot_id: '',
+  ad_video_url: '',
+  ad_video_title: '',
+  ad_video_click_url: '',
+  custom_ad_html: ''
 })
 
 async function load() {
@@ -117,6 +223,19 @@ async function load() {
     if (!basic.view_limit_ad1) basic.view_limit_ad1 = 5
     if (!basic.view_limit_ad2) basic.view_limit_ad2 = 3
     if (!basic.view_limit_ad3) basic.view_limit_ad3 = 1
+    if (!basic.ad_provider) basic.ad_provider = 'simulation'
+    if (!basic.ad_fallback_mode) basic.ad_fallback_mode = 'simulation'
+    basic.ad_min_seconds = Number(basic.ad_min_seconds) || 5
+    basic.ad_simulation_seconds = Number(basic.ad_simulation_seconds) || 5
+    basic.ad_fallback_seconds = Number(basic.ad_fallback_seconds) || 5
+    basic.gdt_app_id = basic.gdt_app_id || ''
+    basic.gdt_placement_id = basic.gdt_placement_id || ''
+    basic.pangle_app_id = basic.pangle_app_id || ''
+    basic.pangle_slot_id = basic.pangle_slot_id || ''
+    basic.ad_video_url = basic.ad_video_url || ''
+    basic.ad_video_title = basic.ad_video_title || ''
+    basic.ad_video_click_url = basic.ad_video_click_url || ''
+    basic.custom_ad_html = basic.custom_ad_html || ''
   } catch (e) {}
 }
 

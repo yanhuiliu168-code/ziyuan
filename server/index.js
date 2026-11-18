@@ -95,6 +95,48 @@ function getNextAdGrant(adCount, s) {
   return s.ad3;
 }
 
+function loadAdSettings() {
+  const rows = query("SELECT key, value FROM site_setting WHERE key LIKE 'ad_%' OR key LIKE 'gdt_%' OR key LIKE 'pangle_%' OR key = 'custom_ad_html'");
+  const s = {};
+  rows.forEach(r => s[r.key] = r.value);
+  return {
+    provider: s.ad_provider || 'simulation',
+    fallback: s.ad_fallback_mode === 'none' ? 'none' : 'simulation',
+    minSeconds: Math.max(1, parseInt(s.ad_min_seconds) || 5),
+    simulationSeconds: Math.max(1, parseInt(s.ad_simulation_seconds) || 5),
+    fallbackSeconds: Math.max(1, parseInt(s.ad_fallback_seconds) || 5),
+    gdtAppId: s.gdt_app_id || '',
+    gdtPlacementId: s.gdt_placement_id || '',
+    pangleAppId: s.pangle_app_id || '',
+    pangleSlotId: s.pangle_slot_id || '',
+    videoUrl: s.ad_video_url || '',
+    videoClickUrl: s.ad_video_click_url || '',
+    videoTitle: s.ad_video_title || '',
+    customHtml: s.custom_ad_html || ''
+  };
+}
+
+// 广告播放会话：用于服务端校验广告确实播放了足够时长，会话只存在内存中
+const adSessions = new Map();
+
+function detectPanName(url) {
+  const u = String(url || '').toLowerCase();
+  if (u.includes('pan.baidu')) return '百度网盘';
+  if (u.includes('cloud.189')) return '天翼云盘';
+  if (u.includes('aliyundrive') || u.includes('alipan')) return '阿里云盘';
+  if (u.includes('pan.quark')) return '夸克网盘';
+  if (u.includes('pan.xunlei')) return '迅雷云盘';
+  return '';
+}
+
+function pruneAdSessions() {
+  const now = Date.now();
+  for (const [id, sess] of adSessions) {
+    if (now - sess.startedAt > 30 * 60 * 1000) adSessions.delete(id);
+  }
+  if (adSessions.size > 5000) adSessions.clear();
+}
+
 async function start() {
   await initDB();
   console.log('数据库初始化完成');
@@ -297,10 +339,15 @@ async function start() {
     if (!r) return res.status(404).json({ error: '资源不存在' });
 
     const quotaSettings = loadQuotaSettings();
-    const isAdmin = !!req.headers.authorization?.startsWith('Bearer ');
+    let isAdmin = false;
+    const authHeader = req.headers.authorization || '';
+    if (authHeader.startsWith('Bearer ')) {
+      try { jwt.verify(authHeader.slice(7), JWT_SECRET); isAdmin = true; } catch (e) {}
+    }
     let visitor = null;
     let remaining = -1;
-    let quotaInfo = { enabled: false, remaining: -1, total: -1, viewed: 0, ad_count: 0, next_ad_grant: 0 };
+    let locked = false;
+    let quotaInfo = { enabled: false, remaining: -1, total: -1, viewed: 0, ad_count: 0, next_ad_grant: 0, locked: false };
 
     if (quotaSettings.enabled && !isAdmin) {
       const token = getVisitorToken(req);
@@ -316,23 +363,19 @@ async function start() {
         remaining = totalAllowed - visitor.view_count + 1;
       }
 
+      locked = remaining <= 0 && !alreadyViewed;
+
       quotaInfo = {
         enabled: true,
         remaining,
         total: totalAllowed,
         viewed: visitor.view_count,
         ad_count: visitor.ad_count,
-        next_ad_grant: getNextAdGrant(visitor.ad_count, quotaSettings)
+        next_ad_grant: getNextAdGrant(visitor.ad_count, quotaSettings),
+        locked
       };
 
-      if (remaining <= 0 && !alreadyViewed) {
-        return res.status(403).json({
-          error: '观看次数已用完',
-          quota: quotaInfo
-        });
-      }
-
-      if (!alreadyViewed) {
+      if (!alreadyViewed && !locked) {
         run('INSERT OR IGNORE INTO visitor_viewed (token, resource_id) VALUES (?, ?)', [token, r.id]);
         run('UPDATE visitor_quota SET view_count = view_count + 1, updated_at = datetime("now","localtime") WHERE token = ?', [token]);
       }
@@ -340,7 +383,7 @@ async function start() {
 
     run('UPDATE resource SET views = views + 1 WHERE id = ?', [req.params.id]);
     const tags = query('SELECT t.* FROM tag t JOIN resource_tag rt ON t.id = rt.tag_id WHERE rt.resource_id = ?', [r.id]);
-    const pans = query('SELECT * FROM resource_pan WHERE resource_id = ? AND status = 1 ORDER BY sort ASC', [r.id]);
+    const pans = locked ? [] : query('SELECT * FROM resource_pan WHERE resource_id = ? AND status = 1 ORDER BY sort ASC', [r.id]);
     const comments = query('SELECT * FROM comment WHERE resource_id = ? AND status = 1 ORDER BY created_at DESC', [r.id]);
     const prev = queryOne('SELECT id, title FROM resource WHERE status = 1 AND publish_time < (SELECT publish_time FROM resource WHERE id = ?) ORDER BY publish_time DESC LIMIT 1', [r.id]);
     const next = queryOne('SELECT id, title FROM resource WHERE status = 1 AND publish_time > (SELECT publish_time FROM resource WHERE id = ?) ORDER BY publish_time ASC LIMIT 1', [r.id]);
@@ -348,7 +391,7 @@ async function start() {
     if (r.images) {
       try { images = JSON.parse(r.images); if (!Array.isArray(images)) images = []; } catch (e) { images = []; }
     }
-    res.json({ ...r, images, tags, pans, comments, prev, next, _quota: quotaInfo });
+    res.json({ ...r, images, tags, pans, comments, prev, next, _locked: locked, _quota: quotaInfo });
   });
 
   app.get('/api/stats', (req, res) => {
@@ -387,7 +430,7 @@ async function start() {
     const id = queryOne('SELECT last_insert_rowid() as id').id;
     
     (pans || []).forEach((p, i) => {
-      run('INSERT INTO resource_pan (resource_id, pan_type, url, code, note, sort) VALUES (?, ?, ?, ?, ?, ?)', [id, p.pan_name || p.pan_type || '', p.url || '', p.code || '', p.note || '', i]);
+      run('INSERT INTO resource_pan (resource_id, pan_type, url, code, note, sort) VALUES (?, ?, ?, ?, ?, ?)', [id, p.pan_name || p.pan_type || detectPanName(p.url) || '', p.url || '', p.code || '', p.note || '', i]);
     });
     
     (tag_ids || req.body.tags || []).forEach(tagId => {
@@ -421,7 +464,7 @@ async function start() {
     if (req.body.pans !== undefined) {
       run('DELETE FROM resource_pan WHERE resource_id = ?', [req.params.id]);
       (req.body.pans || []).forEach((p, i) => {
-        run('INSERT INTO resource_pan (resource_id, pan_type, url, code, note, sort) VALUES (?, ?, ?, ?, ?, ?)', [req.params.id, p.pan_name || p.pan_type || '', p.url || '', p.code || '', p.note || '', i]);
+        run('INSERT INTO resource_pan (resource_id, pan_type, url, code, note, sort) VALUES (?, ?, ?, ?, ?, ?)', [req.params.id, p.pan_name || p.pan_type || detectPanName(p.url) || '', p.url || '', p.code || '', p.note || '', i]);
       });
     }
 
@@ -763,10 +806,53 @@ async function start() {
     });
   });
 
+  // 创建广告播放会话：返回广告位配置与最少观看时长，前端播放完成后凭 session_id 领取奖励
+  app.post('/api/visitor/ad-session', (req, res) => {
+    const qs = loadQuotaSettings();
+    const as = loadAdSettings();
+    if (!qs.enabled) {
+      return res.json({ enabled: false, provider: 'none', session_id: '' });
+    }
+    pruneAdSessions();
+    const token = getVisitorToken(req);
+    const sessionId = 'ad_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    adSessions.set(sessionId, { token, startedAt: Date.now(), minMs: as.minSeconds * 1000 });
+    res.json({
+      enabled: true,
+      session_id: sessionId,
+      provider: as.provider,
+      min_seconds: as.minSeconds,
+      simulation_seconds: as.simulationSeconds,
+      fallback: as.fallback,
+      fallback_seconds: as.fallbackSeconds,
+      ad_config: {
+        gdt_app_id: as.gdtAppId,
+        gdt_placement_id: as.gdtPlacementId,
+        pangle_app_id: as.pangleAppId,
+        pangle_slot_id: as.pangleSlotId,
+        video_url: as.videoUrl,
+        video_click_url: as.videoClickUrl,
+        video_title: as.videoTitle,
+        custom_html: as.customHtml
+      }
+    });
+  });
+
   app.post('/api/visitor/watch-ad', (req, res) => {
     const s = loadQuotaSettings();
     if (!s.enabled) return res.json({ success: true, granted: 0 });
     const token = getVisitorToken(req);
+    const sessionId = (req.body && req.body.session_id) || '';
+    const session = sessionId ? adSessions.get(sessionId) : null;
+    if (!session || session.token !== token) {
+      return res.status(400).json({ error: '广告会话无效，请重新观看广告' });
+    }
+    const elapsed = Date.now() - session.startedAt;
+    if (elapsed < session.minMs - 500) {
+      return res.status(400).json({ error: '广告未看完，请完整观看后再领取奖励' });
+    }
+    adSessions.delete(sessionId);
+
     const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.ip || '';
     const v = getOrCreateVisitor(token, ip);
     const grant = getNextAdGrant(v.ad_count, s);

@@ -26,7 +26,12 @@ async function initDB() {
 
 function ensureSettings() {
   const required = [
-    ['friend_links_status', '1']
+    ['friend_links_status', '1'],
+    ['view_limit_status', '0'],
+    ['view_limit_free', '10'],
+    ['view_limit_ad1', '5'],
+    ['view_limit_ad2', '3'],
+    ['view_limit_ad3', '1']
   ];
   required.forEach(([key, val]) => {
     const exists = queryOne('SELECT key FROM site_setting WHERE key = ?', [key]);
@@ -99,6 +104,35 @@ function ensureSettings() {
     }
   } catch (e) {
     console.error('Visit_log migration error:', e.message);
+  }
+
+  try {
+    const t1 = query("SELECT name FROM sqlite_master WHERE type='table' AND name='visitor_quota'");
+    if (!t1.length) {
+      db.exec(`CREATE TABLE visitor_quota (
+        token TEXT PRIMARY KEY,
+        ip TEXT DEFAULT '',
+        view_count INTEGER DEFAULT 0,
+        ad_count INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        updated_at TEXT DEFAULT (datetime('now','localtime'))
+      )`);
+      saveDB();
+      console.log('Visitor_quota table created');
+    }
+    const t2 = query("SELECT name FROM sqlite_master WHERE type='table' AND name='visitor_viewed'");
+    if (!t2.length) {
+      db.exec(`CREATE TABLE visitor_viewed (
+        token TEXT,
+        resource_id INTEGER,
+        viewed_at TEXT DEFAULT (datetime('now','localtime')),
+        PRIMARY KEY (token, resource_id)
+      )`);
+      saveDB();
+      console.log('Visitor_viewed table created');
+    }
+  } catch (e) {
+    console.error('Visitor tables migration error:', e.message);
   }
 }
 
@@ -301,7 +335,12 @@ function seedData() {
     ['community_title', '加入社群'],
     ['community_desc', '获取更多资源更新和独家福利'],
     ['community_link', ''],
-    ['community_status', '1']
+    ['community_status', '1'],
+    ['view_limit_status', '0'],
+    ['view_limit_free', '10'],
+    ['view_limit_ad1', '5'],
+    ['view_limit_ad2', '3'],
+    ['view_limit_ad3', '1']
   ];
   settings.forEach(s => db.run('INSERT INTO site_setting (key, value) VALUES (?, ?)', s));
 

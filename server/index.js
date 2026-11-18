@@ -50,6 +50,51 @@ function auth(req, res, next) {
   }
 }
 
+function getVisitorToken(req) {
+  const header = req.headers['x-visitor-token'] || '';
+  if (header && header.length >= 10) return header;
+  const ip = req.headers['x-forwarded-for']?.split(',')[0].trim()
+    || req.headers['x-real-ip'] || req.ip || req.connection?.remoteAddress || '';
+  const ua = (req.headers['user-agent'] || '').slice(0, 200);
+  return md5(ip + '|' + ua);
+}
+
+function loadQuotaSettings() {
+  const rows = query("SELECT key, value FROM site_setting WHERE key LIKE 'view_limit_%'");
+  const s = {};
+  rows.forEach(r => s[r.key] = r.value);
+  return {
+    enabled: s.view_limit_status === '1',
+    free: parseInt(s.view_limit_free) || 10,
+    ad1: parseInt(s.view_limit_ad1) || 5,
+    ad2: parseInt(s.view_limit_ad2) || 3,
+    ad3: parseInt(s.view_limit_ad3) || 1
+  };
+}
+
+function calcTotalAllowed(q, s) {
+  let total = s.free;
+  if (q.ad_count >= 1) total += s.ad1;
+  if (q.ad_count >= 2) total += s.ad2;
+  if (q.ad_count >= 3) total += s.ad3 * (q.ad_count - 2);
+  return total;
+}
+
+function getOrCreateVisitor(token, ip) {
+  let v = queryOne('SELECT * FROM visitor_quota WHERE token = ?', [token]);
+  if (!v) {
+    run('INSERT INTO visitor_quota (token, ip) VALUES (?, ?)', [token, ip]);
+    v = queryOne('SELECT * FROM visitor_quota WHERE token = ?', [token]);
+  }
+  return v;
+}
+
+function getNextAdGrant(adCount, s) {
+  if (adCount === 0) return s.ad1;
+  if (adCount === 1) return s.ad2;
+  return s.ad3;
+}
+
 async function start() {
   await initDB();
   console.log('数据库初始化完成');
@@ -250,6 +295,49 @@ async function start() {
   app.get('/api/resources/:id', (req, res) => {
     const r = queryOne('SELECT r.*, c.name as category_name FROM resource r LEFT JOIN category c ON r.category_id = c.id WHERE r.id = ? AND r.status = 1', [req.params.id]);
     if (!r) return res.status(404).json({ error: '资源不存在' });
+
+    const quotaSettings = loadQuotaSettings();
+    const isAdmin = !!req.headers.authorization?.startsWith('Bearer ');
+    let visitor = null;
+    let remaining = -1;
+    let quotaInfo = { enabled: false, remaining: -1, total: -1, viewed: 0, ad_count: 0, next_ad_grant: 0 };
+
+    if (quotaSettings.enabled && !isAdmin) {
+      const token = getVisitorToken(req);
+      const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.ip || '';
+      visitor = getOrCreateVisitor(token, ip);
+
+      const alreadyViewed = queryOne('SELECT 1 FROM visitor_viewed WHERE token = ? AND resource_id = ?', [token, r.id]);
+      const totalAllowed = calcTotalAllowed(visitor, quotaSettings);
+
+      if (!alreadyViewed) {
+        remaining = totalAllowed - visitor.view_count;
+      } else {
+        remaining = totalAllowed - visitor.view_count + 1;
+      }
+
+      quotaInfo = {
+        enabled: true,
+        remaining,
+        total: totalAllowed,
+        viewed: visitor.view_count,
+        ad_count: visitor.ad_count,
+        next_ad_grant: getNextAdGrant(visitor.ad_count, quotaSettings)
+      };
+
+      if (remaining <= 0 && !alreadyViewed) {
+        return res.status(403).json({
+          error: '观看次数已用完',
+          quota: quotaInfo
+        });
+      }
+
+      if (!alreadyViewed) {
+        run('INSERT OR IGNORE INTO visitor_viewed (token, resource_id) VALUES (?, ?)', [token, r.id]);
+        run('UPDATE visitor_quota SET view_count = view_count + 1, updated_at = datetime("now","localtime") WHERE token = ?', [token]);
+      }
+    }
+
     run('UPDATE resource SET views = views + 1 WHERE id = ?', [req.params.id]);
     const tags = query('SELECT t.* FROM tag t JOIN resource_tag rt ON t.id = rt.tag_id WHERE rt.resource_id = ?', [r.id]);
     const pans = query('SELECT * FROM resource_pan WHERE resource_id = ? AND status = 1 ORDER BY sort ASC', [r.id]);
@@ -260,7 +348,7 @@ async function start() {
     if (r.images) {
       try { images = JSON.parse(r.images); if (!Array.isArray(images)) images = []; } catch (e) { images = []; }
     }
-    res.json({ ...r, images, tags, pans, comments, prev, next });
+    res.json({ ...r, images, tags, pans, comments, prev, next, _quota: quotaInfo });
   });
 
   app.get('/api/stats', (req, res) => {
@@ -656,6 +744,41 @@ async function start() {
     if (user.password !== md5(old_password)) return res.status(400).json({ error: '原密码错误' });
     run('UPDATE admin_user SET password = ? WHERE id = ?', [md5(new_password), req.admin.id]);
     res.json({ success: true });
+  });
+
+  app.get('/api/visitor/quota', (req, res) => {
+    const s = loadQuotaSettings();
+    if (!s.enabled) return res.json({ enabled: false });
+    const token = getVisitorToken(req);
+    const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.ip || '';
+    const v = getOrCreateVisitor(token, ip);
+    const totalAllowed = calcTotalAllowed(v, s);
+    res.json({
+      enabled: true,
+      remaining: totalAllowed - v.view_count,
+      total: totalAllowed,
+      viewed: v.view_count,
+      ad_count: v.ad_count,
+      next_ad_grant: getNextAdGrant(v.ad_count, s)
+    });
+  });
+
+  app.post('/api/visitor/watch-ad', (req, res) => {
+    const s = loadQuotaSettings();
+    if (!s.enabled) return res.json({ success: true, granted: 0 });
+    const token = getVisitorToken(req);
+    const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.ip || '';
+    const v = getOrCreateVisitor(token, ip);
+    const grant = getNextAdGrant(v.ad_count, s);
+    run('UPDATE visitor_quota SET ad_count = ad_count + 1, updated_at = datetime("now","localtime") WHERE token = ?', [token]);
+    const updated = queryOne('SELECT * FROM visitor_quota WHERE token = ?', [token]);
+    const totalAllowed = calcTotalAllowed(updated, s);
+    res.json({
+      success: true,
+      granted: grant,
+      remaining: totalAllowed - updated.view_count,
+      ad_count: updated.ad_count
+    });
   });
 
   app.use((err, req, res, next) => {

@@ -33,6 +33,13 @@ export const PAN_PROVIDERS = [
     keywords: ['pan.xunlei', '迅雷云盘', '迅雷云'],
     icon: 'https://www.xunlei.com/favicon.ico',
     color: '#1e90ff'
+  },
+  {
+    type: 'cmcc',
+    name: '中国移动云盘',
+    keywords: ['yun.139', '中国移动云盘', '移动云盘', '139云盘'],
+    icon: 'https://yun.139.com/favicon.ico',
+    color: '#0085d0'
   }
 ]
 

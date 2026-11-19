@@ -126,6 +126,7 @@ function detectPanName(url) {
   if (u.includes('aliyundrive') || u.includes('alipan')) return '阿里云盘';
   if (u.includes('pan.quark')) return '夸克网盘';
   if (u.includes('pan.xunlei')) return '迅雷云盘';
+  if (u.includes('yun.139')) return '中国移动云盘';
   return '';
 }
 
